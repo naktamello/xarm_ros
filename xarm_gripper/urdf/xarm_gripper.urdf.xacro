@@ -279,7 +279,7 @@
       upper="0.85"
       effort="50"
       velocity="2" />
-    <mimic joint="drive_joint" multiplier="1" offset="0" />
+    <mimic joint="${prefix}drive_joint" multiplier="1" offset="0" />
   </joint>
   <link
     name="${prefix}right_finger">
@@ -394,6 +394,20 @@
       effort="50"
       velocity="2" />
     <mimic joint="${prefix}drive_joint" multiplier="1" offset="0" />
+  </joint>
+
+  <link name="${prefix}link_tcp" />
+
+  <joint
+    name="${prefix}joint_tcp"
+    type="fixed">
+    <origin
+      xyz="0 0 0.172"
+      rpy="0 0 0" />
+    <parent
+      link="${prefix}xarm_gripper_base_link" />
+    <child
+      link="${prefix}link_tcp" />
   </joint>
 
   </xacro:macro>
