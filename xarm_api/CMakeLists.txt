@@ -2,7 +2,9 @@ cmake_minimum_required(VERSION 2.8.3)
 project(xarm_api)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-add_compile_options(-std=c++11)
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 11)
+endif()
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -17,6 +19,8 @@ find_package(catkin REQUIRED COMPONENTS
 )
 
 set(XARM_API_DIR src/xarm)
+set(XARM_CORE_API_DIR src/xarm/core)
+set(SERIAL_API_DIR src/serial)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -127,24 +131,27 @@ include_directories(
 
 ## Declare a C++ library
 add_library(xarm_api
-   ${XARM_API_DIR}/connect.cc
-   ${XARM_API_DIR}/report_data.cc
+  ${XARM_CORE_API_DIR}/connect.cc
+  ${XARM_CORE_API_DIR}/report_data.cc
 
-   ${XARM_API_DIR}/common/crc16.cc
-   ${XARM_API_DIR}/common/queue_memcpy.cc
+  ${XARM_CORE_API_DIR}/common/crc16.cc
+  ${XARM_CORE_API_DIR}/common/queue_memcpy.cc
 
-   ${XARM_API_DIR}/debug/debug_print.cc
+  ${XARM_CORE_API_DIR}/debug/debug_print.cc
 
-   ${XARM_API_DIR}/instruction/uxbus_cmd.cc
-   ${XARM_API_DIR}/instruction/uxbus_cmd_ser.cc
-   ${XARM_API_DIR}/instruction/uxbus_cmd_tcp.cc
+  ${XARM_CORE_API_DIR}/instruction/uxbus_cmd.cc
+  ${XARM_CORE_API_DIR}/instruction/uxbus_cmd_ser.cc
+  ${XARM_CORE_API_DIR}/instruction/uxbus_cmd_tcp.cc
 
-   ${XARM_API_DIR}/linux/network.cc
-   ${XARM_API_DIR}/linux/thread.cc
+   ${XARM_CORE_API_DIR}/os/network.cc
 
-   ${XARM_API_DIR}/port/serial.cc
-   ${XARM_API_DIR}/port/socket.cc
+  ${XARM_CORE_API_DIR}/port/ser.cc
+  ${XARM_CORE_API_DIR}/port/socket.cc
 
+  ${SERIAL_API_DIR}/serial.cc
+  ${SERIAL_API_DIR}/impl/unix.cc
+  ${SERIAL_API_DIR}/impl/win.cc
+  ${SERIAL_API_DIR}/impl/list_ports/list_ports_linux.cc
  )
 
 add_library(xarm_ros_client
@@ -182,6 +189,14 @@ add_executable(servo_cart_test
    test/servo_cartesian_test.cpp
 )
 
+add_executable(test_velo_move
+   test/test_velo_move.cpp
+)
+
+add_executable(test_xarm_cgpio_states
+   test/test_xarm_cgpio_states.cpp
+)
+
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -194,31 +209,58 @@ add_executable(servo_cart_test
 
 
 ## Specify libraries to link a library or executable target against
- target_link_libraries(example1_report_norm_node 
-   xarm_api
-   ${catkin_LIBRARIES}
- )
+if(MSVC)
+  target_link_libraries(xarm_api 
+    Ws2_32.lib
+    ${catkin_LIBRARIES}
+  )
 
- target_link_libraries(xarm_driver_node 
-   xarm_api
-   ${catkin_LIBRARIES}
- )
+  target_link_libraries(xarm_ros_client 
+    Ws2_32.lib
+    ${catkin_LIBRARIES}
+  )
+endif()
+
+target_link_libraries(example1_report_norm_node 
+  xarm_api
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(xarm_driver_node 
+  xarm_api
+  ${catkin_LIBRARIES}
+)
 
 target_link_libraries(move_test 
-   xarm_api
-   ${catkin_LIBRARIES}
- )
+  xarm_api
+  ${catkin_LIBRARIES}
+)
 
 target_link_libraries(test_tool_modbus 
-   xarm_api
-   ${catkin_LIBRARIES}
-   xarm_ros_client
- )
+  xarm_api
+  ${catkin_LIBRARIES}
+  xarm_ros_client
+)
 
 target_link_libraries(servo_cart_test 
-   xarm_api
-   ${catkin_LIBRARIES}
- )
+  xarm_api
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(test_velo_move 
+  xarm_api
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(test_xarm_cgpio_states 
+  xarm_api
+  ${catkin_LIBRARIES}
+)
+
+# Causes the visibility macros to use dllexport rather than dllimport,
+# which is appropriate when building the dll but not consuming it.
+target_compile_definitions(xarm_api
+  PRIVATE "XARM_API_BUILDING_LIBRARY")
 
 
 #############

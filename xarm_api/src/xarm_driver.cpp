@@ -5,45 +5,57 @@
  * Author: Jason Peng <jason@ufactory.cc>
  ============================================================================*/
 #include <xarm_driver.h>
-#include "xarm/instruction/uxbus_cmd_config.h"
-#include "xarm/linux/thread.h"
-
-#define CMD_HEARTBEAT_US 3e7 // 30s
+#include "xarm/core/instruction/uxbus_cmd_config.h"
+#define CMD_HEARTBEAT_SEC 30 // 30s
 
 void* cmd_heart_beat(void* args)
 {
     xarm_api::XARMDriver *my_driver = (xarm_api::XARMDriver *) args;
-    while(true)
+    UxbusCmd *arm_cmd = my_driver->get_uxbus_cmd();
+    while(arm_cmd->is_ok() == 0)
     {
-        usleep(CMD_HEARTBEAT_US); // non-realtime
+        ros::Duration(CMD_HEARTBEAT_SEC).sleep(); // non-realtime
         my_driver->Heartbeat();
     }
-    pthread_exit(0);
+    ROS_ERROR("xArm Control Connection Failed! Please Shut Down (Ctrl-C) and Retry ...");
+    return (void*)0;
 }
 
 namespace xarm_api
 {   
     XARMDriver::~XARMDriver()
     {   
-        // pthread_cancel(thread_id_);  // heartbeat related
         arm_cmd_->set_mode(XARM_MODE::POSE);
         arm_cmd_->close();
         spinner.stop();
+    }
+
+    void XARMDriver::closeReportSocket(void)
+    {
+        arm_report_->close_port();
+    }
+
+    bool XARMDriver::reConnectReportSocket(char *server_ip)
+    {
+        arm_report_ = connect_tcp_report(server_ip, report_type_);
+        return arm_report_ != NULL;
     }
 
     void XARMDriver::XARMDriverInit(ros::NodeHandle& root_nh, char *server_ip)
     {   
         nh_ = root_nh;
         nh_.getParam("DOF",dof_);
-
-        arm_report_ = connext_tcp_report_norm(server_ip);
+        root_nh.getParam("xarm_report_type", report_type_);
+        arm_report_ = connect_tcp_report(server_ip, report_type_);
+        // arm_report_ = connext_tcp_report_norm(server_ip);
         // ReportDataNorm norm_data_;
         arm_cmd_ = connect_tcp_control(server_ip);  
         if (arm_cmd_ == NULL)
             ROS_ERROR("Xarm Connection Failed!");
         else // clear unimportant errors
         {
-            thread_id_ = thread_init(cmd_heart_beat, this); // heartbeat related
+            std::thread th(cmd_heart_beat, this);
+            th.detach();
             int dbg_msg[16] = {0};
             arm_cmd_->servo_get_dbmsg(dbg_msg);
 
@@ -103,12 +115,19 @@ namespace xarm_api
         set_controller_dout_server_ = nh_.advertiseService("set_controller_dout", &XARMDriver::SetControllerDOutCB, this);
         get_controller_din_server_ = nh_.advertiseService("get_controller_din", &XARMDriver::GetControllerDInCB, this);
         set_controller_aout_server_ = nh_.advertiseService("set_controller_aout", &XARMDriver::SetControllerAOutCB, this);
-        get_controller_ain_server_= nh_.advertiseService("get_controller_ain", &XARMDriver::GetControllerAInCB, this);
+        get_controller_ain_server_ = nh_.advertiseService("get_controller_ain", &XARMDriver::GetControllerAInCB, this);
+
+        // velocity control:
+        vc_set_jointv_server_ = nh_.advertiseService("velo_move_joint", &XARMDriver::VeloMoveJointCB, this);
+        vc_set_linev_server_ = nh_.advertiseService("velo_move_line", &XARMDriver::VeloMoveLineVCB, this);
+        set_max_jacc_server_ = nh_.advertiseService("set_max_acc_joint", &XARMDriver::SetMaxJAccCB, this);
+        set_max_lacc_server_ = nh_.advertiseService("set_max_acc_line", &XARMDriver::SetMaxLAccCB, this);
 
         // state feedback topics:
         joint_state_ = nh_.advertise<sensor_msgs::JointState>("joint_states", 10, true);
         robot_rt_state_ = nh_.advertise<xarm_msgs::RobotMsg>("xarm_states", 10, true);
         // end_input_state_ = nh_.advertise<xarm_msgs::IOState>("xarm_input_states", 10, true);
+        cgpio_state_ = nh_.advertise<xarm_msgs::CIOState>("xarm_cgpio_states", 10, true);
 
         // subscribed topics
         sleep_sub_ = nh_.subscribe("sleep_sec", 1, &XARMDriver::SleepTopicCB, this);
@@ -128,7 +147,7 @@ namespace xarm_api
 
     bool XARMDriver::isConnectionOK(void)
     {
-        return !arm_report_->is_ok(); // is_ok will return 0 if connection is normal
+        return arm_report_->is_ok() == 0; // is_ok will return 0 if connection is normal
     }
 
     void XARMDriver::SleepTopicCB(const std_msgs::Float32ConstPtr& msg)
@@ -216,7 +235,15 @@ namespace xarm_api
 			} break;
             case XARM_MODE::TEACH_JOINT:
 			{
-				res.message = "joint teach , ret = " + std::to_string(res.ret);
+				res.message = "joint teach, ret = " + std::to_string(res.ret);
+			} break;
+            case XARM_MODE::VELO_JOINT:
+			{
+				res.message = "joint velocity, ret = " + std::to_string(res.ret);
+			} break;
+            case XARM_MODE::VELO_CART:
+			{
+				res.message = "cartesian velocity, ret = " + std::to_string(res.ret);
 			} break;
             default:
             {
@@ -371,7 +398,8 @@ namespace xarm_api
     {
         int send_len = req.send_data.size();
         int recv_len = req.respond_len;
-        unsigned char tx_data[send_len]={0}, rx_data[recv_len]={0};
+        unsigned char * tx_data = new unsigned char [send_len]{0};
+        unsigned char * rx_data = new unsigned char [recv_len]{0};
 
         for(int i=0; i<send_len; i++)
         {
@@ -383,6 +411,8 @@ namespace xarm_api
            res.respond_data.push_back(rx_data[i]);
         }
 
+        delete [] tx_data;
+        delete [] rx_data;
         return true;
     }
 
@@ -664,6 +694,82 @@ namespace xarm_api
         return true;
     }
 
+    bool XARMDriver::VeloMoveJointCB(xarm_msgs::MoveVelo::Request &req, xarm_msgs::MoveVelo::Response &res)
+    {
+        float jnt_v[7]={0};
+        int index = 0;
+        if(req.velocities.size() < dof_)
+        {
+            res.ret = req.velocities.size();
+            res.message = "pose parameters incorrect! Expected: "+std::to_string(dof_);
+            return true;
+        }
+        else
+        {
+            for(index = 0; index < 7; index++) // should always send 7 joint commands, whatever current DOF is.
+            {
+                // jnt_v[0][index] = req.velocities[index];
+                if(index < req.velocities.size())
+                    jnt_v[index] = req.velocities[index];
+                else
+                    jnt_v[index] = 0;
+            }
+        }
+
+        res.ret = arm_cmd_->vc_set_jointv(jnt_v, req.jnt_sync);
+        res.message = "velocity move joint, ret = " + std::to_string(res.ret);
+        return true;
+    }
+
+    bool XARMDriver::VeloMoveLineVCB(xarm_msgs::MoveVelo::Request &req, xarm_msgs::MoveVelo::Response &res)
+    {
+        float line_v[6];
+        int index = 0;
+        if(req.velocities.size() < 6)
+        {
+            res.ret = -1;
+            res.message = "number of parameters incorrect!";
+            return true;
+        }
+        else
+        {
+            for(index = 0; index < 6; index++)
+            {
+                line_v[index] = req.velocities[index];
+            }
+        }
+
+        res.ret = arm_cmd_->vc_set_linev(line_v, req.coord);
+        res.message = "velocity move line, ret = " + std::to_string(res.ret);
+        return true;
+    }
+
+    bool XARMDriver::SetMaxJAccCB(xarm_msgs::SetFloat32::Request &req, xarm_msgs::SetFloat32::Response &res)
+    {
+        if(req.data<0 || req.data>20.0)
+        {
+            res.ret = -1;
+            res.message = "set max joint acc: " + std::to_string(req.data) + "error! Proper range is: 0-20.0 rad/s^2";
+            return true;
+        }
+        res.ret = arm_cmd_->set_joint_maxacc(req.data);
+        res.message = "set max joint acc: " + std::to_string(req.data) + " ret = " + std::to_string(res.ret);
+        return true;
+    }
+
+    bool XARMDriver::SetMaxLAccCB(xarm_msgs::SetFloat32::Request &req, xarm_msgs::SetFloat32::Response &res)
+    {
+        if(req.data<0 || req.data>50000.0)
+        {
+            res.ret = -1;
+            res.message = "set max linear acc: " + std::to_string(req.data) + "error! Proper range is: 0-50000.0 mm/s^2";
+            return true;
+        }
+        res.ret = arm_cmd_->set_tcp_maxacc(req.data);
+        res.message = "set max linear acc: " + std::to_string(req.data) + " ret = " + std::to_string(res.ret);
+        return true;
+    }
+
     bool XARMDriver::GripperConfigCB(xarm_msgs::GripperConfig::Request &req, xarm_msgs::GripperConfig::Response &res)
     {
         if(req.pulse_vel>5000)
@@ -753,20 +859,38 @@ namespace xarm_api
         end_input_state_.publish(io_msg);
     }
 
-    int XARMDriver::get_frame(void)
+    void XARMDriver::pub_cgpio_state(xarm_msgs::CIOState &cio_msg)
+    {
+        cgpio_state_.publish(cio_msg);
+    }
+
+    int XARMDriver::get_frame(unsigned char *data)
     {
         int ret;
-        ret = arm_report_->read_frame(rx_data_);
+        ret = arm_report_->read_frame(data);
         return ret;
     }
 
-    int XARMDriver::get_rich_data(ReportDataNorm &norm_data)
-    {
-        int ret;
-        ret = norm_data_.flush_data(rx_data_);
-        norm_data = norm_data_;
-        return ret;
-    }
+    // void XARMDriver::update_rich_data(unsigned char *data, int size)
+    // {
+    //     memcpy(rx_data_, data, size);
+    // }
+
+    // int XARMDriver::flush_report_data(XArmReportData &report_data)
+    // {
+    //     int ret;
+    //     ret = report_data_.flush_data(rx_data_);
+    //     report_data = report_data_;
+    //     return ret;
+    // }
+
+    // int XARMDriver::get_rich_data(ReportDataNorm &norm_data)
+    // {
+    //     int ret;
+    //     ret = norm_data_.flush_data(rx_data_);
+    //     norm_data = norm_data_;
+    //     return ret;
+    // }
 
     int XARMDriver::wait_for_finish()
     {

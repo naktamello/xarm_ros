@@ -51,6 +51,7 @@ find_package(catkin REQUIRED COMPONENTS
    FILES
    RobotMsg.msg
    IOState.msg
+   CIOState.msg
  )
 
 ## Generate services in the 'srv' folder
@@ -74,6 +75,8 @@ find_package(catkin REQUIRED COMPONENTS
    GetControllerDigitalIO.srv
    SetControllerAnalogIO.srv
    MoveAxisAngle.srv
+   MoveVelo.srv
+   SetFloat32.srv
  )
 
 ## Generate actions in the 'action' folder

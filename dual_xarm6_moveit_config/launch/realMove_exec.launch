@@ -1,6 +1,8 @@
 <launch>
   <arg name="robot_ip_1" /> 
   <arg name="robot_ip_2" />
+  <arg name="report_type_1" default="normal" />	
+  <arg name="report_type_2" default="normal" />	
   <arg name="hw_ns_1" default="L_xarm6" />
   <arg name="hw_ns_2" default="R_xarm6" />
   <!-- load the default move_group planner (not xarm_simple_planner) -->
@@ -13,14 +15,14 @@
   <include file="$(find xarm_bringup)/launch/dual_xarm6_server.launch">
     <arg name="robot_ip_1" value="$(arg robot_ip_1)" />
     <arg name="robot_ip_2" value="$(arg robot_ip_2)" />
+    <arg name="report_type_1" value="$(arg report_type_1)" />
+    <arg name="report_type_2" value="$(arg report_type_2)" />
     <arg name="hw_ns_1" value="$(arg hw_ns_1)" />
     <arg name="hw_ns_2" value="$(arg hw_ns_2)" />
     <arg name="use_moveit" value="false" />
   </include>
 
   <!-- run xarm_combined_traj_controller from HW interface, enable direct command to real robot arm -->  
-  <remap from="$(arg hw_ns_1)/control_rate" to="/control_rate"/>
-  <remap from="$(arg hw_ns_2)/control_rate" to="/control_rate"/>
   <node name="xarm_combined_traj_controller" pkg="xarm_controller" type="xarm_combined_traj_controller" respawn="false" output="screen" />
 
   <!-- load the joint trajectory controller specified in yaml -->
