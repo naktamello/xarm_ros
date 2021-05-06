@@ -29,7 +29,7 @@
     args="xarm7_traj_controller"/>
 
   <remap from="/follow_joint_trajectory" to="xarm/xarm7_traj_controller/follow_joint_trajectory"/>
-
+  <!-- <rosparam command="load" file="$(find xarm7_moveit_config)/config/kinematics.yaml"/> -->
   <!-- common part -->
   <remap from="/tf" to="$(arg ext_ns)/tf" />
   <remap from="/tf_static" to="$(arg ext_ns)/tf_static" />
